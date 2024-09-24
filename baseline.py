@@ -1,3 +1,4 @@
+# подключение необходимых библиотек
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,13 +13,14 @@ from tqdm import tqdm
 from collections import Counter
 
 class BaseDataset(Dataset):
+# загружает пути к изображениям и их метки
     def __init__(self, root_dir, transform=None, balance=False):
         self.root_dir = root_dir
         self.transform = transform
         self.classes = {cls_name: idx for idx, cls_name in enumerate(os.listdir(root_dir))}
         self.image_paths = []
         self.labels = []
-        self.numeric_label = None  # Для хранения метки для числовых изображений
+        self.numeric_label = None 
 
         for cls_name in os.listdir(root_dir):
             cls_folder = os.path.join(root_dir, cls_name)
@@ -35,7 +37,7 @@ class BaseDataset(Dataset):
                             self.numeric_label = label
 
         if balance:
-            # Балансировка данных с oversampling
+        # использование RandomOverSampler для балансировки классов
             self.image_paths = np.array(self.image_paths)
             self.labels = np.array(self.labels)
 
@@ -56,29 +58,26 @@ class BaseDataset(Dataset):
 
         return image, label
 
-# Модификация функции бинарных метрик
-def compute_binary_metrics(preds, labels, numeric_label, numeric_pred, thresholds):
-    metrics = {'threshold': [], 'precision': [], 'recall': [], 'f1': []}
+def compute_binary_metrics(preds, labels, numeric_label, numeric_pred):
+    metrics = {'precision': [], 'recall': [], 'f1': []}
 
     # Получаем предсказанные классы (максимум по вероятности)
-    predicted_classes = preds.argmax(dim=1)  # Индекс с максимальной вероятностью по каждому изображению
+    predicted_classes = preds.argmax(dim=1)
 
-    for threshold in thresholds:
-        # Бинаризация предсказаний: 0, если предсказанный класс равен numeric_label, иначе 1
-        binary_preds = (predicted_classes != numeric_pred).int()
+    # Бинаризация предсказаний: 0, если предсказанный класс равен numeric_label, иначе 1
+    binary_preds = (predicted_classes != numeric_pred).int()
 
-        # Бинаризация меток: 0, если истинная метка равна numeric_label, иначе 1
-        binary_labels = (labels != numeric_label).int()
+    # Бинаризация меток: 0, если истинная метка равна numeric_label, иначе 1
+    binary_labels = (labels != numeric_label).int()
 
-        # Рассчёт метрик
-        precision = precision_score(binary_labels.cpu(), binary_preds.cpu(), average='binary')
-        recall = recall_score(binary_labels.cpu(), binary_preds.cpu(), average='binary')
-        f1 = f1_score(binary_labels.cpu(), binary_preds.cpu(), average='binary')
+    # Рассчёт метрик
+    precision = precision_score(binary_labels.cpu(), binary_preds.cpu(), average='binary')
+    recall = recall_score(binary_labels.cpu(), binary_preds.cpu(), average='binary')
+    f1 = f1_score(binary_labels.cpu(), binary_preds.cpu(), average='binary')
 
-        metrics['threshold'].append(threshold)
-        metrics['precision'].append(precision)
-        metrics['recall'].append(recall)
-        metrics['f1'].append(f1)
+    metrics['precision'].append(precision)
+    metrics['recall'].append(recall)
+    metrics['f1'].append(f1)
 
     return metrics
 
@@ -123,8 +122,8 @@ def get_data_loaders(train_dir, val_dir, batch_size=32):
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(degrees=10),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-    transforms.RandomAffine(degrees=15, shear=10),  # Афинные преобразования с сдвигом
-    transforms.RandomPerspective(distortion_scale=0.3, p=0.2),  # Искажения перспективы
+    transforms.RandomAffine(degrees=15, shear=10),
+    transforms.RandomPerspective(distortion_scale=0.3, p=0.2),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -144,15 +143,11 @@ def get_data_loaders(train_dir, val_dir, batch_size=32):
 
     return train_loader, val_loader
 
-# Добавляем логику для вывода метки
 def train_model(model, train_loader, val_loader, device, num_epochs=10, learning_rate=0.0001):
-    criterion = nn.CrossEntropyLoss()  # Лосс для много-классовой классификации
+    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=1, factor=0.01)
 
-    thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]  # Список порогов
-
-    # Получаем метку для числовых изображений
     numeric_label = train_loader.dataset.numeric_label
     print(f"Метка для изображений с числовыми именами: {numeric_label}")
 
@@ -200,20 +195,14 @@ def train_model(model, train_loader, val_loader, device, num_epochs=10, learning
         most_common_class = most_common_class_for_numeric_names(image_names, predicted_classes)
         print(f"Наиболее часто присваиваемый класс для изображений с числовыми именами: {most_common_class}")
 
-        metrics = compute_binary_metrics(torch.tensor(all_preds), torch.tensor(all_labels), numeric_label, most_common_class, thresholds)
+        metrics = compute_binary_metrics(torch.tensor(all_preds), torch.tensor(all_labels), numeric_label, most_common_class)
 
-        for i, threshold in enumerate(thresholds):
-            print(f'Threshold: {threshold:.1f} - Precision: {metrics["precision"][i]:.3f}, Recall: {metrics["recall"][i]:.3f}, F1-Score: {metrics["f1"][i]:.3f}')
+        print(f'Precision: {metrics["precision"][0]:.3f}, Recall: {metrics["recall"][0]:.3f}, F1-Score: {metrics["f1"][0]:.3f}')
 
         scheduler.step(val_loss)
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f'Current Learning Rate: {current_lr:.6f}')
-
-        # Сохранение модели после каждой эпохи
-        model_save_path = f'baseline_epoch_{epoch+1}.pth'
-        torch.save(model.state_dict(), model_save_path)
-        print(f'Model weights saved to {model_save_path}')
 
     return model
 
@@ -230,5 +219,8 @@ if __name__ == "__main__":
     num_classes = len(os.listdir(TRAIN_DIR))
     model = init_efficientnet_model(device, num_classes)
 
+    num_epochs = 10
     # Запускаем обучение
-    trained_model = train_model(model, train_loader, val_loader, device)
+    trained_model = train_model(model, train_loader, val_loader, device, num_epochs)
+
+    torch.save(model.state_dict(), 'baseline.pth')
